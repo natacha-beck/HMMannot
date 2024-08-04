@@ -9,6 +9,7 @@ import shutil
 import subprocess
 
 from masterfile import Masterfile
+from hmmannot_lib.annotate_using_external_programs import annotate_using_external_programs
 
 ##############################################################################################
 # Utilities Methods                                                                          #
@@ -19,6 +20,12 @@ def dir_path(path):
         return path
     else:
         raise argparse.ArgumentTypeError(f"readable_dir:{path} is not a valid path")
+
+def file_path(path):
+    if os.path.isfile(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"readable_file:{path} is not a valid path")
 
 ##############################################################################################
 # Set up the command line arguments                                                          #
@@ -71,6 +78,13 @@ parser.add_argument('--eslstrand',
                     choices=['watson', 'crick'],
                     help="""The strand of the sequence.""")
 
+# type is a file
+parser.add_argument('--ext_select',
+                    type=file_path,
+                    help="""A file used in order to call external programs.
+                    If not provided, the program will look for a file `.mfannot_external_programs.select`
+                    in a directory specified by the environment variable MFANNOT_EXT_SELECT_PATH.""")
+
 args = parser.parse_args()
 
 ##############################################################################################
@@ -90,6 +104,16 @@ else:
 if args.debug:
     print(f"TMPDIR: {TMPDIR}\n")
 os.mkdir(TMPDIR, 0o700)
+
+#--------------------------------#
+# Set MFANNOT_EXT_CFG_FILE       #
+#--------------------------------#
+
+# Set the global variable MFANNOT_EXT_CFG_FILE if args.ext_select or get it from the environment
+MFANNOT_EXT_CFG_FILE = args.ext_select or (os.environ.get("MFANNOT_EXT_CFG_PATH") + "/.mfannot_external_programs.conf")
+# Check if the file exists
+if not os.path.isfile(MFANNOT_EXT_CFG_FILE):
+    raise FileNotFoundError(f"File not found: {MFANNOT_EXT_CFG_FILE}")
 
 #---------------------#
 # Read the masterfile #
@@ -115,13 +139,43 @@ for contig in contigs:
 ofh.close()
 
 
+###################################################################
+# Check file existance: models, external config file.             #
+###################################################################
+
+# 1. Check for models path
+actual_model_path = (os.getenv("MFANNOT_MOD_PATH") or os.getenv("HOME") or ".") + "/MFannot_data/models"
+all_model_paths   = None
+if os.getenv("MFANNOT_MOD_PATH"):
+    all_model_paths = actual_model_path + ":" + os.getenv("MFANNOT_MOD_PATH")
+
+model_paths = all_model_paths.split(":")
+
+model_path = ""
+for path in model_paths:
+    if os.path.isdir(path):
+        model_path = path
+        break
+
+if not model_path:
+    raise FileNotFoundError("No path for ErpinModels and HMMweaselModels were found")
+
+# 2. Verify HMMmodel path
+HMM_model_path = f("{model_path}/HMM_models/id_by_gene")
+if not os.path.isdir(HMM_model_path):
+    raise FileNotFoundError("Directory for gene identified by HMM model not found")
+
 ##############################################################################################
 # Main steps                                                                                 #
 ##############################################################################################
 
+# Run each step of the pipeline
+step = 1
 
-# TODO
-
+# Identify introns
+print(f"{step}) Introns identification...\n")
+annotate_using_external_programs(MFANNOT_EXT_CFG_FILE, TMPDIR, pirmaster, args.masterfile, args.genetic, model_path, args.debug, "IntronI","IntronII")
+step += 1
 
 ##############################################################################################
 # Should run after all step                                                                  #
@@ -131,4 +185,4 @@ ofh.close()
 # if not in debug mode
 if not args.debug:
     print(f"Removing temporary directory: {TMPDIR}\n")
-    os.rmtree(TMPDIR)
+    os.rmdir(TMPDIR)
